@@ -24,7 +24,9 @@ Gem::Specification.new do |spec|
   spec.files = Dir.glob("lib/**/*") + %w[LICENSE README.md]
   spec.require_paths = [ "lib" ]
 
-  spec.add_dependency "mailersend-ruby", ">= 2.0"
+  # Sending is one POST to a documented JSON endpoint, which net/http out of the
+  # standard library does without adding anything to the tree. See DeliveryMethod
+  # for why the vendor SDK is not worth its dependencies.
   spec.add_dependency "railties", ">= 7.1"
   spec.add_dependency "actionmailer", ">= 7.1"
 end

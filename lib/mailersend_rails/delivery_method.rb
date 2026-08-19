@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
-require "mailersend-ruby"
+require "json"
+require "net/http"
+require "uri"
+
+require_relative "version"
 
 module MailersendRails
   # An Action Mailer delivery method for MailerSend.
@@ -8,18 +12,31 @@ module MailersendRails
   # Failures raise rather than returning quietly, so the enqueuing job retries and
   # the error is visible. Swallowing them means a magic link that silently goes
   # nowhere, which looks to the person waiting for it exactly like a broken app.
+  #
+  # The API is posted to directly rather than through mailersend-ruby. Sending is
+  # a single POST of a JSON body this class already assembles itself, and the SDK
+  # asks a lot in return: http, which it pins a major version behind and so holds
+  # back every application that carries it, plus an FFI parser that has to be
+  # compiled into every image.
   class DeliveryMethod
     class DeliveryError < StandardError; end
+
+    DEFAULT_ENDPOINT = "https://api.mailersend.com/v1/email"
+
+    # The SDK's timeouts, kept because they are sensible: long enough for a slow
+    # accept, short enough that a wedged connection fails into the retry rather
+    # than occupying a worker.
+    OPEN_TIMEOUT = 15
+    READ_TIMEOUT = 30
 
     attr_reader :settings
 
     def initialize(settings = {})
-      @settings = settings
+      @settings = settings || {}
     end
 
     def deliver!(mail)
-      email = build(mail)
-      response = email.send
+      response = post(payload_for(mail))
 
       return response if success?(response)
 
@@ -27,51 +44,64 @@ module MailersendRails
     end
 
     private
-      def build(mail)
-        email = Mailersend::Email.new(client)
-
-        email.add_subject(mail.subject)
-        email.add_html(html_for(mail))
-        # Only when there is one: passing nil is rejected by the API rather than
-        # treated as absent.
-        text = mail.text_part&.body&.decoded
-        email.add_text(text) if text.present?
-
-        add_from(email, mail)
-        add_recipients(email, mail)
-        email
+      # MailerSend treats an absent field as "not set" but rejects several of them
+      # sent empty, so anything we have nothing for is dropped rather than blanked.
+      def payload_for(mail)
+        {
+          "from" => address_in(mail[:from]),
+          "to" => addresses_in(mail[:to]),
+          "cc" => addresses_in(mail[:cc]),
+          "bcc" => addresses_in(mail[:bcc]),
+          "reply_to" => Array(mail.reply_to).empty? ? {} : address_in(mail[:reply_to]),
+          "subject" => mail.subject,
+          "text" => mail.text_part&.body&.decoded,
+          "html" => html_for(mail)
+        }.reject { |_, value| omit?(value) }
       end
 
       def html_for(mail)
         mail.html_part&.body&.decoded || mail.body.decoded
       end
 
-      def add_from(email, mail)
-        from = Mail::Address.new(mail[:from].to_s)
-        email.add_from(email: from.address, name: from.display_name)
-
-        return if mail.reply_to.blank?
-
-        reply_to = Mail::Address.new(mail[:reply_to].to_s)
-        email.add_reply_to(email: reply_to.address, name: reply_to.display_name)
+      def address_in(field)
+        as_recipient(Mail::Address.new(field.to_s))
       end
 
-      def add_recipients(email, mail)
-        each_address(mail[:to]) { |a| email.add_recipients(email: a.address, name: a.display_name) }
-        each_address(mail[:cc]) { |a| email.add_cc(email: a.address, name: a.display_name) }
-        each_address(mail[:bcc]) { |a| email.add_bcc(email: a.address, name: a.display_name) }
+      def addresses_in(field)
+        Array(field).map { |entry| as_recipient(Mail::Address.new(entry.to_s)) }
       end
 
-      def each_address(field)
-        Array(field).each { |entry| yield Mail::Address.new(entry.to_s) }
+      def as_recipient(address)
+        { "email" => address.address, "name" => address.display_name }
+      end
+
+      def omit?(value)
+        value == [] || value == {} || value.to_s.strip.empty?
       end
 
       def success?(response)
         response.code.to_s.start_with?("2")
       end
 
-      def client
-        @client ||= Mailersend::Client.new(MailersendRails.config.api_token!)
+      # Overridable so a test, or a staging environment, can point somewhere other
+      # than the live API.
+      def endpoint
+        @endpoint ||= URI(settings[:endpoint] || DEFAULT_ENDPOINT)
+      end
+
+      def post(payload)
+        request = Net::HTTP::Post.new(endpoint)
+        request["Authorization"] = "Bearer #{MailersendRails.config.api_token!}"
+        request["Content-Type"] = "application/json"
+        request["Accept"] = "application/json"
+        request["User-Agent"] = "mailersend_rails/#{MailersendRails::VERSION}"
+        request.body = JSON.generate(payload)
+
+        Net::HTTP.start(
+          endpoint.hostname, endpoint.port,
+          use_ssl: endpoint.scheme == "https",
+          open_timeout: OPEN_TIMEOUT, read_timeout: READ_TIMEOUT
+        ) { |http| http.request(request) }
       end
   end
 end
