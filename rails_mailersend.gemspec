@@ -3,7 +3,7 @@
 require_relative "lib/mailersend_rails/version"
 
 Gem::Specification.new do |spec|
-  spec.name          = "mailersend-rails"
+  spec.name          = "rails_mailersend"
   spec.version       = MailersendRails::VERSION
   spec.authors       = [ "Dan Loman" ]
   spec.email         = [ "daniel.h.loman@gmail.com" ]
