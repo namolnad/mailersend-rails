@@ -67,8 +67,12 @@ module MailersendRails
         as_recipient(Mail::Address.new(field.to_s))
       end
 
+      # `mail[:to]` is one field whose `to_s` is the whole comma-joined list, and
+      # `Mail::Address.new` on that parses the first address and drops the rest --
+      # which is how a three-person ops alias arrives as one person, silently and
+      # only in production. The field already holds the addresses parsed.
       def addresses_in(field)
-        Array(field).map { |entry| as_recipient(Mail::Address.new(entry.to_s)) }
+        Array(field&.addrs).map { |address| as_recipient(address) }
       end
 
       def as_recipient(address)

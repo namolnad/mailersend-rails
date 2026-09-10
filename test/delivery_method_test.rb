@@ -102,6 +102,23 @@ module MailersendRails
       assert_equal "<p>On its way.</p>", payload["html"]
     end
 
+    # The failure this guards is silent and only happens in production: a field is
+    # one object whose `to_s` is the whole comma-joined list, so parsing it as an
+    # address keeps the first name on the list and drops everyone behind them.
+    def test_sends_to_every_recipient_on_a_field
+      mail = build_mail(
+        to: "Ada <ada@example.com>, grace@example.com, Alan <alan@example.com>",
+        cc: "one@example.com, two@example.com"
+      )
+
+      payload = JSON.parse(with_api { |endpoint| deliver(mail, endpoint) }[:body])
+
+      assert_equal %w[ada@example.com grace@example.com alan@example.com],
+                   payload["to"].map { |entry| entry["email"] }
+      assert_equal [ "Ada", nil, "Alan" ], payload["to"].map { |entry| entry["name"] }
+      assert_equal %w[one@example.com two@example.com], payload["cc"].map { |entry| entry["email"] }
+    end
+
     # MailerSend rejects an empty list where it accepts an absent key, which is
     # what the SDK's own compaction was for.
     def test_omits_the_fields_there_is_nothing_to_say_for
