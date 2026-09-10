@@ -1,4 +1,4 @@
-# mailersend_rails
+# mailersend-rails
 
 MailerSend for Rails: an Action Mailer delivery method, and an optional Action
 Mailbox ingress for inbound mail.
@@ -11,8 +11,14 @@ the gem.
 ## Install
 
 ```ruby
-gem "mailersend_rails"
+gem "mailersend-rails"
 ```
+
+The dash matters: `mailersend_rails` on RubyGems is an unrelated gem by another
+author, and RubyGems treats the two spellings as different names. Everything
+inside is underscored — `require "mailersend_rails"`, `MailersendRails` — and a
+one-line `lib/mailersend-rails.rb` is there so Bundler's auto-require lands in the
+right place without a `require:` option in your Gemfile.
 
 ```ruby
 # config/environments/production.rb
