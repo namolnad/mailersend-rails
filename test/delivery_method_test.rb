@@ -127,7 +127,34 @@ module MailersendRails
       payload = JSON.parse(with_api { |endpoint| deliver(mail, endpoint) }[:body])
 
       assert_equal %w[from to subject html], payload.keys
-      %w[cc bcc reply_to text].each { |key| refute_includes payload, key }
+      %w[cc bcc reply_to text in_reply_to references].each { |key| refute_includes payload, key }
+    end
+
+    # Threading is invisible until it is wrong, and then it is invisible in the
+    # other direction: the reply arrives as a conversation of its own, which
+    # reads as the app having ignored the thread rather than as two fields
+    # missing from a JSON body.
+    def test_carries_in_reply_to_and_references
+      mail = build_mail
+      mail.in_reply_to = "<parent@example.com>"
+      mail.references = [ "<first@example.com>", "<parent@example.com>" ]
+
+      payload = JSON.parse(with_api { |endpoint| deliver(mail, endpoint) }[:body])
+
+      assert_equal "<parent@example.com>", payload["in_reply_to"]
+      assert_equal %w[<first@example.com> <parent@example.com>], payload["references"]
+    end
+
+    # The mail gem strips the angle brackets off every id it parses, whatever
+    # shape the mailer wrote them in, and MailerSend validates against the RFC
+    # 5322 form. So both spellings have to arrive bracketed.
+    def test_puts_the_angle_brackets_back_on_message_ids
+      mail = build_mail
+      mail.in_reply_to = "bare@example.com"
+
+      payload = JSON.parse(with_api { |endpoint| deliver(mail, endpoint) }[:body])
+
+      assert_equal "<bare@example.com>", payload["in_reply_to"]
     end
 
     def test_a_non_2xx_response_raises_so_the_job_retries

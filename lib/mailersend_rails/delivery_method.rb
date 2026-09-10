@@ -55,8 +55,39 @@ module MailersendRails
           "reply_to" => Array(mail.reply_to).empty? ? {} : address_in(mail[:reply_to]),
           "subject" => mail.subject,
           "text" => mail.text_part&.body&.decoded,
-          "html" => html_for(mail)
+          "html" => html_for(mail),
+          "in_reply_to" => message_ids_in(mail[:in_reply_to]).first,
+          "references" => message_ids_in(mail[:references])
         }.reject { |_, value| omit?(value) }
+      end
+
+      # In-Reply-To and References, in the form MailerSend asks for them.
+      #
+      # Threading is what puts a reply under the message it answers rather than
+      # in a conversation of its own, and these two headers are the whole of it.
+      # They need carrying by hand because the API takes fields rather than a
+      # MIME message: every header Action Mailer set that isn't named in
+      # #payload_for is dropped here, and a mailer that sets In-Reply-To and
+      # then watches its reply arrive as a new thread has nowhere to look for
+      # where it went. Both fields are paid-plan only at MailerSend, which
+      # answers a request carrying them on a free account with a 422 -- loudly,
+      # like every other delivery failure.
+      #
+      # The `mail` gem hands ids back with the angle brackets stripped and
+      # MailerSend validates against the RFC 5322 form, so they go back on. A
+      # field too malformed to parse falls back to splitting on whitespace,
+      # which is the shape of both headers.
+      def message_ids_in(field)
+        return [] if field.nil?
+
+        ids = field.respond_to?(:message_ids) ? field.message_ids : field.to_s.split
+        Array(ids).filter_map { |id| bracketed(id) }
+      end
+
+      def bracketed(id)
+        id = id.to_s.strip.delete_prefix("<").delete_suffix(">").strip
+
+        "<#{id}>" unless id.empty?
       end
 
       def html_for(mail)

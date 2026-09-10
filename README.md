@@ -65,6 +65,21 @@ than returning quietly, so the enqueuing job retries and the failure is visible.
 For an app where sign-in is by magic link, a swallowed delivery error looks
 exactly like a broken app to the person waiting.
 
+`In-Reply-To` and `References` are carried across to MailerSend's own
+`in_reply_to` and `references` fields, so a reply lands under the message it
+answers instead of opening a conversation of its own:
+
+```ruby
+mail(to: person.email_address, subject: "Re: #{parent_subject}",
+     in_reply_to: parent_message_id, references: [parent_message_id])
+```
+
+Angle brackets are put back on, since the `mail` gem strips them and MailerSend
+validates against the RFC 5322 form. Every other header is dropped: the API takes
+fields rather than a MIME message, and these are the two worth translating. Both
+are paid-plan only at MailerSend, which answers a free account carrying them with
+a 422 — loudly, rather than with an unthreaded reply nobody can account for.
+
 ## Inbound mail
 
 Optional, and only loads when the app has Action Mailbox. MailerSend posts the
