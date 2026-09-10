@@ -14,7 +14,7 @@ Gem::Specification.new do |spec|
     ingress that hands MailerSend's posted RFC822 message to Action Mailbox --
     including the envelope-recipient stamping that Bcc'd mail depends on.
   DESC
-  spec.homepage      = "https://github.com/namolnad/mailersend-rails"
+  spec.homepage      = "https://github.com/namolnad/rails_mailersend"
   spec.license       = "MIT"
   spec.required_ruby_version = ">= 3.1"
 
