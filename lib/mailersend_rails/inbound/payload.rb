@@ -2,16 +2,33 @@
 
 require "json"
 
+require_relative "../configuration"
+
 module MailersendRails
   module Inbound
     # Everything about an inbound MailerSend post that can be decided without a
     # request object. Pulled out of the controller so the parts most worth getting
-    # right -- the header-injection guard and the envelope-recipient stamping --
-    # are testable on their own.
+    # right -- the header-injection guard, the envelope-recipient stamping and the
+    # transport's verdicts -- are testable on their own.
     class Payload
       # A plausible single address. Anything else is dropped rather than trusted.
       ADDRESS = /\A[^\s<>@]+@[^\s<>@]+\z/
       MAX_RECIPIENTS = 10
+
+      # The one header the ingress writes under a name it doesn't own: Action
+      # Mailbox's own Postmark ingress writes this, and code downstream looks for
+      # it by that name, so it isn't namespaced. It is still ours, though, and a
+      # sender's copy of it is cleared with the rest.
+      ORIGINAL_TO = "X-Original-To"
+
+      # MailerSend reports SPF in received-SPF shorthand -- `+` pass, `-` fail,
+      # `~` softfail, `?` neutral -- and DKIM as a boolean. Each becomes one word
+      # from a fixed list, so nothing in the payload can put anything else into a
+      # header.
+      SPF_CODES = {
+        "+" => "pass", "-" => "fail", "~" => "softfail", "?" => "neutral",
+        "pass" => "pass", "fail" => "fail", "softfail" => "softfail", "neutral" => "neutral"
+      }.freeze
 
       def self.parse(body)
         new(JSON.parse(body.to_s))
@@ -53,18 +70,71 @@ module MailersendRails
           .first(MAX_RECIPIENTS)
       end
 
-      # The raw message with X-Original-To prepended for each envelope recipient,
-      # the same move Action Mailbox's own Postmark ingress makes.
+      # What MailerSend's own checks made of the sender, in one word each. "none"
+      # when it said nothing, so a reader downstream can tell a failed check from
+      # a message that never passed through here at all.
+      def spf_verdict
+        check = to_h.dig("data", "spf_check")
+        code = check.is_a?(Hash) ? check["code"] : check
+
+        SPF_CODES.fetch(code.to_s.strip.downcase, "none")
+      end
+
+      def dkim_verdict
+        case to_h.dig("data", "dkim_check")
+        when true, "true", "pass" then "pass"
+        when false, "false", "fail" then "fail"
+        else "none"
+        end
+      end
+
+      def spf_header = "#{header_prefix}SPF"
+
+      def dkim_header = "#{header_prefix}DKIM"
+
+      # The raw message with what the transport knew stamped on the front: who it
+      # was actually delivered to, and the SPF and DKIM verdicts.
+      #
+      # The verdicts are the one thing in the payload a forger cannot write, which
+      # is what makes them worth carrying -- a From: line is whatever the sender
+      # typed, and this is the only evidence about it that arrives from outside the
+      # message. Any header of ours the sender supplied is cleared first, so the
+      # first one downstream reads is always the ingress's.
       #
       # The address filter above is load-bearing: an envelope recipient containing
       # a newline could otherwise add arbitrary headers, or close the header block
       # and forge a body.
-      def message_with_envelope_recipients
-        headers = envelope_recipients.map { |address| "X-Original-To: #{address}\n" }.join
-        return raw_message if headers.empty?
+      def message_with_transport_headers
+        stamped = envelope_recipients.map { |address| "#{ORIGINAL_TO}: #{address}\n" }
+        stamped << "#{spf_header}: #{spf_verdict}\n"
+        stamped << "#{dkim_header}: #{dkim_verdict}\n"
 
-        headers + raw_message.to_s
+        stamped.join + strip_reserved_headers(raw_message.to_s)
       end
+
+      private
+        def header_prefix = MailersendRails.config.header_prefix
+
+        # Every header the ingress writes, wherever in the block the sender put it.
+        # The prefix is a namespace and everything under it is ours; X-Original-To
+        # is one name, so the colon is required and X-Original-Tomato survives.
+        def reserved_header
+          /\A(?:#{Regexp.escape(ORIGINAL_TO)}\s*:|#{Regexp.escape(header_prefix)})/i
+        end
+
+        # Header lines named for us, folded continuations included. Only the header
+        # block is touched; the body is the sender's. A message carrying none of
+        # ours is returned byte-for-byte, which is the overwhelmingly common case.
+        def strip_reserved_headers(raw)
+          header_block, separator, body = raw.partition(/\r?\n\r?\n/)
+          return raw if separator.empty?
+
+          lines = header_block.split(/\r?\n(?![ \t])/)
+          kept = lines.reject { |line| line.match?(reserved_header) }
+          return raw if kept.size == lines.size
+
+          kept.join("\n") + separator + body
+        end
     end
   end
 end

@@ -13,11 +13,31 @@ module MailersendRails
     class MissingApiToken < StandardError; end
     class MissingInboundSecret < StandardError; end
 
+    DEFAULT_HEADER_PREFIX = "X-Mailersend-"
+
     attr_writer :api_token, :inbound_secret
     attr_accessor :log_tag
+    attr_reader :header_prefix
 
     def initialize
       @log_tag = "mailersend"
+      @header_prefix = DEFAULT_HEADER_PREFIX
+    end
+
+    # The namespace for the headers the ingress stamps onto an arriving message,
+    # and the same namespace it clears off one first.
+    #
+    # Worth setting to the app's own house prefix, and worth setting once: these
+    # names are written into messages that are then stored, so changing the prefix
+    # later leaves every message already on disk answering to a name nothing reads.
+    #
+    # Normalized to end in a hyphen, because `X-Acme` and `X-Acme-` differ by one
+    # character and the first one produces `X-AcmeSPF`.
+    def header_prefix=(value)
+      prefix = value.to_s.strip
+      raise ArgumentError, "header_prefix cannot be blank" if prefix.empty?
+
+      @header_prefix = prefix.end_with?("-") ? prefix : "#{prefix}-"
     end
 
     def api_token

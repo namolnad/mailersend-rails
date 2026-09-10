@@ -44,8 +44,14 @@ Or set it explicitly:
 MailersendRails.configure do |config|
   config.api_token = Vault.read("mailersend/token")
   config.log_tag = "inbound"          # prefixes the ingress log lines
+  config.header_prefix = "X-Acme-"    # namespaces the headers the ingress stamps
 end
 ```
+
+`header_prefix` defaults to `X-Mailersend-`, and is worth setting once to the
+app's own house prefix. The names go into messages that are then stored, so
+changing it later leaves every message already on disk answering to a name
+nothing reads.
 
 Delivery failures raise `MailersendRails::DeliveryMethod::DeliveryError` rather
 than returning quietly, so the enqueuing job retries and the failure is visible.
@@ -71,7 +77,7 @@ post "inbound/mailersend" => "inbound/mailersend#create"
 Point a MailerSend inbound route at that URL and put the route's secret in
 `mailersend.inbound_secret`.
 
-Three things it handles that are easy to get wrong:
+Five things it handles that are easy to get wrong:
 
 **The validation ping is answered before the secret is checked.** A route's secret
 is generated when the route is saved, so there is no secret to configure until the
@@ -88,6 +94,21 @@ move Action Mailbox's own Postmark ingress makes.
 **Envelope addresses are filtered before being written into headers.** Header
 injection would otherwise be one crafted address away — an address containing a
 newline could add arbitrary headers, or close the header block and forge a body.
+
+**MailerSend's SPF and DKIM verdicts are stamped on as `<prefix>SPF` and
+`<prefix>DKIM`.** They are the one part of the payload a forger cannot write: a
+`From:` line is whatever the sender typed, and these are the only evidence about
+it that arrives from outside the message. Each is normalized to one word from a
+fixed list — `pass`, `fail`, `softfail`, `neutral`, or `none` — so nothing in the
+payload can put anything else into a header. `none` means MailerSend said nothing,
+which is distinguishable from a message that never came through the ingress at
+all, since that one has no such header.
+
+**Headers in the ingress's own namespace are cleared off an arriving message
+before its own are stamped.** Otherwise a sender supplies the verdict that is
+supposed to judge them, or an `X-Original-To` naming somewhere the message was
+never delivered. The whole prefix is reserved, and so is `X-Original-To`. A
+message carrying none of them is passed through byte for byte.
 
 The signature is verified against the exact bytes MailerSend signed, before
 anything parses them; checking against a re-serialised body would verify our own

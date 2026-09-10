@@ -23,6 +23,19 @@ class ConfigurationTest < MailersendRails::TestCase
     assert_includes error.message, "MAILERSEND_API_TOKEN"
   end
 
+  # `X-Acme` and `X-Acme-` differ by one character, and the first one names the
+  # header `X-AcmeSPF`.
+  def test_header_prefix_defaults_and_normalizes
+    assert_equal "X-Mailersend-", MailersendRails.config.header_prefix
+
+    MailersendRails.configure { |c| c.header_prefix = "X-Acme" }
+    assert_equal "X-Acme-", MailersendRails.config.header_prefix
+  end
+
+  def test_a_blank_header_prefix_is_refused
+    assert_raises(ArgumentError) { MailersendRails.config.header_prefix = "  " }
+  end
+
   def test_inbound_secret_is_optional
     refute MailersendRails.config.inbound_secret?
 

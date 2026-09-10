@@ -37,7 +37,7 @@ module MailersendRails
         # Rescues RecordNotUnique internally and returns nil, so a retried webhook
         # is already a no-op here.
         ActionMailbox::InboundEmail.create_and_extract_message_id!(
-          payload.message_with_envelope_recipients
+          payload.message_with_transport_headers
         )
 
         head :no_content
